@@ -15,9 +15,8 @@ from joblib import Parallel, delayed
 num_cores = 10
 patch_size = 256  # training on 256x256 patches
 overlap = 128
-# Use the "train" folder on your Desktop
-src = os.path.join(os.path.expanduser("~"), "Desktop", "train")
-tar = os.path.join(os.path.expanduser("~"), "Desktop", "train_cropped")  # Destination for cropped dataset
+src = 'GOPRO_Large/train'  # Raw dataset location
+tar = 'Datasets/train/GoPro'  # Destination for cropped dataset
 
 # Directories for cropped images
 lr_tar = os.path.join(tar, 'input_crops')   # Blurry cropped images
@@ -26,8 +25,7 @@ hr_tar = os.path.join(tar, 'target_crops')    # Sharp cropped images
 os.makedirs(lr_tar, exist_ok=True)
 os.makedirs(hr_tar, exist_ok=True)
 
-# Get image file paths (using sorted() for deterministic order)
-# This code expects subfolders in 'src' that contain 'blur' and 'sharp' folders.
+# Get image file paths (using sorted() instead of natsort)
 lr_files = sorted(glob(os.path.join(src, '*', 'blur', '*.png')) + 
                   glob(os.path.join(src, '*', 'blur', '*.jpg')))
 hr_files = sorted(glob(os.path.join(src, '*', 'sharp', '*.png')) + 
@@ -121,7 +119,7 @@ class SpatialRearrangementUnit(nn.Module):
 class MultiscaleSRM(nn.Module):
     def __init__(self, in_channels, hidden_dim, out_channels, patch_size):
         super(MultiscaleSRM, self).__init__()
-        self.patch_size = patch_size  # assumed spatial size of the patch
+        self.patch_size = patch_size  # assumed spatial size of the feature map
 
         # Different SRU modules for different scales
         self.sru_small = SpatialRearrangementUnit(window_size=2)
@@ -149,7 +147,7 @@ class MultiscaleSRM(nn.Module):
         
         B, C, H, W = x_combined.shape
         flattened = x_combined.view(B, -1)  # Flatten spatial dimensions
-
+        
         restored = self.mlp(flattened)
         restored = restored.view(B, C, H, W)
         return restored
@@ -169,36 +167,3 @@ def test_model():
     print("Output shape:", output.shape)
 
 test_model()
-import matplotlib.pyplot as plt
-import torchvision.transforms as transforms
-
-def show_image(tensor, title="Image"):
-    # Convert tensor to a NumPy array and normalize for display
-    # Assume tensor is (C, H, W)
-    tensor = tensor.cpu().detach()
-    # Convert from (C, H, W) to (H, W, C)
-    image = tensor.permute(1, 2, 0).numpy()
-    # Normalize to [0,1] if necessary (assuming input is standard normal, this may not be in [0,1])
-    image = (image - image.min()) / (image.max() - image.min())
-    plt.imshow(image)
-    plt.title(title)
-    plt.axis("off")
-    plt.show()
-
-def test_model():
-    # Create a dummy patch with shape (B, C, patch_size, patch_size)
-    B, C = 1, 3
-    dummy_patch = torch.randn(B, C, patch_size, patch_size)
-    
-    model = MultiscaleSRM(in_channels=C, hidden_dim=64, out_channels=C, patch_size=patch_size)
-    output = model(dummy_patch)
-    
-    print("Input shape:", dummy_patch.shape)
-    print("Output shape:", output.shape)
-    
-    # Display the input and output images (first element of the batch)
-    show_image(dummy_patch[0], title="Input Patch")
-    show_image(output[0], title="Restored Output Patch")
-
-test_model()
-
