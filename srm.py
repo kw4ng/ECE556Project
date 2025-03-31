@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# Unchanged Spatial Rearrangment Unit from Kevin
+# Spaital Rearrangment Unit
 class SpatialRearrangementUnit(nn.Module):
     def __init__(self, window_size):
         """
@@ -239,3 +239,32 @@ class SpatialRearrangementRestorationUnit(nn.Module):
         x_restore = self.restore_dimension(x_width, dim=2)
         
         return x_restore
+
+# SRM block that intigrate all 5 previous class
+class SRMBlock(nn.Module):
+    def __init__(self, window_size, in_channels, original_height, original_width):
+        """
+        window_size: size of the local window (e.g., 4 for a 4x4 window).
+        in_channels: number of channels of the input feature map.
+        original_height, original_width: dimensions of the feature map after rearrangement.
+        """
+        super(SRMBlock, self).__init__()
+        self.rearrangement = SpatialRearrangementUnit(window_size)
+        self.partitioning = WindowPartitioningUnit(window_size)
+        self.projection = SpatialProjectionUnit(in_channels, window_size)
+        self.merging = WindowMergingUnit(window_size, original_height, original_width)
+        self.restoration = SpatialRearrangementRestorationUnit(window_size)
+        
+    def forward(self, x):
+        # x: (B, C, H, W)
+        # 1. Apply spatial rearrangement (with padding)
+        x = self.rearrangement(x)
+        # 2. Partition into non-overlapping windows
+        x = self.partitioning(x)
+        # 3. Apply spatial projection (window-based fully connected layer)
+        x = self.projection(x)
+        # 4. Merge windows back into a full feature map
+        x = self.merging(x)
+        # 5. Restore original spatial ordering (inverse rearrangement)
+        x = self.restoration(x)
+        return x
