@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+# Unchanged Spatial Rearrangment Unit from Kevin
 class SpatialRearrangementUnit(nn.Module):
     def __init__(self, window_size):
         """
