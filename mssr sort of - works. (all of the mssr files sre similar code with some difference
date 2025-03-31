@@ -1,0 +1,76 @@
+import os
+from glob import glob
+import numpy as np
+import matplotlib.pyplot as plt
+from PIL import Image
+
+# Show image function
+def show_image(image_array, title="Image"):
+    image_array = (image_array - image_array.min()) / (image_array.max() - image_array.min())  # Normalize to [0,1]
+    plt.imshow(image_array)
+    plt.title(title)
+    plt.axis('off')
+    plt.show()
+
+#############################################
+# PART 1: IMAGE PATCH EXTRACTION FROM GoPro DATASET
+#############################################
+
+# Parameters for patch extraction
+patch_size = 256  # training on 256x256 patches
+src = '/Users/ananya/Downloads/GOPRO_Large/train/'  # Raw dataset location
+
+# Get image file paths
+lr_files = sorted(glob(os.path.join(src, '*', 'blur', '*.png')) + 
+                  glob(os.path.join(src, '*', 'blur', '*.jpg')))
+hr_files = sorted(glob(os.path.join(src, '*', 'sharp', '*.png')) + 
+                  glob(os.path.join(src, '*', 'sharp', '*.jpg')))
+
+# Load one image pair for demonstration
+if lr_files and hr_files:
+    lr_image_path = lr_files[0]
+    hr_image_path = hr_files[0]
+
+    # Open images using PIL
+    lr_image = Image.open(lr_image_path).convert('RGB')
+    hr_image = Image.open(hr_image_path).convert('RGB')
+
+    # Convert PIL images to NumPy arrays
+    lr_array = np.array(lr_image) / 255.0  # Normalize to [0,1]
+    hr_array = np.array(hr_image) / 255.0
+else:
+    print("No images found. Check the dataset path.")
+
+#############################################
+# PART 2: SPATIAL REARRANGEMENT UNIT (WITHOUT TORCH)
+#############################################
+
+def spatial_rearrange(image, window_size):
+    """Rearrange the image spatially using a simple shift method."""
+    h, w, c = image.shape
+    shift = window_size // 2
+
+    # Create padded version of the image
+    padded_image = np.pad(image, ((shift, shift), (shift, shift), (0, 0)), mode='reflect')
+
+    # Rearrange by shifting
+    rearranged = (padded_image[:-window_size, :-window_size, :] + 
+                  padded_image[window_size:, window_size:, :]) / 2
+    return rearranged
+
+# Apply the spatial rearrangement with different window sizes
+lr_small = spatial_rearrange(lr_array, window_size=2)
+lr_medium = spatial_rearrange(lr_array, window_size=4)
+lr_large = spatial_rearrange(lr_array, window_size=8)
+
+# Combine the results
+lr_restored = (lr_small + lr_medium + lr_large) / 3  # Averaging the scales
+
+#############################################
+# PART 3: DISPLAY RESULTS
+#############################################
+
+show_image(lr_array, title="Blurry Image")
+show_image(lr_restored, title="Restored Image")
+
+
