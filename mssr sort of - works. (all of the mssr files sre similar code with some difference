@@ -1,76 +1,93 @@
-import os
-from glob import glob
-import numpy as np
-import matplotlib.pyplot as plt
-from PIL import Image
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
-# Show image function
-def show_image(image_array, title="Image"):
-    image_array = (image_array - image_array.min()) / (image_array.max() - image_array.min())  # Normalize to [0,1]
-    plt.imshow(image_array)
-    plt.title(title)
-    plt.axis('off')
-    plt.show()
+# Define the Spatial Rearrangement Unit (SRU)
+class SpatialRearrangementUnit(nn.Module):
+    def __init__(self, window_size):
+        super(SpatialRearrangementUnit, self).__init__()
+        self.window_size = window_size
+        self.step = window_size // 2
 
-#############################################
-# PART 1: IMAGE PATCH EXTRACTION FROM GoPro DATASET
-#############################################
+    def rearrange_dimension(self, x, dim):
+        chunk_size = self.window_size // 2
+        chunks = list(x.split(chunk_size, dim=dim))
+        num_chunks = (x.size(dim) - 2 * chunk_size) // chunk_size
+        num_groups = num_chunks // 2
+        new_chunks = []
+        for i in range(1, num_groups + 1):
+            first = chunks[2 * i - 2]
+            second = chunks[2 * i + 1]
+            new_chunks.append(torch.cat([first, second], dim=dim))
+        return torch.cat(new_chunks, dim=dim)
 
-# Parameters for patch extraction
-patch_size = 256  # training on 256x256 patches
-src = '/Users/ananya/Downloads/GOPRO_Large/train/'  # Raw dataset location
+    def forward(self, x):
+        B, C, H, W = x.shape
+        chunk_size = self.window_size // 2
 
-# Get image file paths
-lr_files = sorted(glob(os.path.join(src, '*', 'blur', '*.png')) + 
-                  glob(os.path.join(src, '*', 'blur', '*.jpg')))
-hr_files = sorted(glob(os.path.join(src, '*', 'sharp', '*.png')) + 
-                  glob(os.path.join(src, '*', 'sharp', '*.jpg')))
+        # Width-direction padding and rearrangement
+        left_pad = x[:, :, :, :chunk_size]
+        right_pad = x[:, :, :, -chunk_size:]
+        x_padded_w = torch.cat([left_pad, x, right_pad], dim=3)
+        x_width = self.rearrange_dimension(x_padded_w, dim=3)
 
-# Load one image pair for demonstration
-if lr_files and hr_files:
-    lr_image_path = lr_files[0]
-    hr_image_path = hr_files[0]
+        # Height-direction padding and rearrangement
+        top_pad = x_width[:, :, :chunk_size, :]
+        bottom_pad = x_width[:, :, -chunk_size:, :]
+        x_padded_h = torch.cat([top_pad, x_width, bottom_pad], dim=2)
+        x_final = self.rearrange_dimension(x_padded_h, dim=2)
+        return x_final
 
-    # Open images using PIL
-    lr_image = Image.open(lr_image_path).convert('RGB')
-    hr_image = Image.open(hr_image_path).convert('RGB')
+# Define the Multiscale Spatial Rearrangement Network (MSSR)
+class MSSRNet(nn.Module):
+    def __init__(self, in_channels, hidden_dim, out_channels, patch_size):
+        super(MSSRNet, self).__init__()
+        self.patch_size = patch_size
 
-    # Convert PIL images to NumPy arrays
-    lr_array = np.array(lr_image) / 255.0  # Normalize to [0,1]
-    hr_array = np.array(hr_image) / 255.0
-else:
-    print("No images found. Check the dataset path.")
+        # Apply SRUs with different window sizes (2, 4, 8)
+        self.sru_small = SpatialRearrangementUnit(window_size=2)
+        self.sru_medium = SpatialRearrangementUnit(window_size=4)
+        self.sru_large = SpatialRearrangementUnit(window_size=8)
 
-#############################################
-# PART 2: SPATIAL REARRANGEMENT UNIT (WITHOUT TORCH)
-#############################################
+        # MLP layer to combine features
+        flattened_dim = in_channels * patch_size * patch_size
+        self.mlp = nn.Sequential(
+            nn.Linear(flattened_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, flattened_dim)
+        )
 
-def spatial_rearrange(image, window_size):
-    """Rearrange the image spatially using a simple shift method."""
-    h, w, c = image.shape
-    shift = window_size // 2
+    def forward(self, x):
+        # Apply SRUs to the input image at multiple scales
+        x_small = self.sru_small(x)
+        x_medium = self.sru_medium(x)
+        x_large = self.sru_large(x)
+        
+        # Combine the different scale features
+        x_combined = x_small + x_medium + x_large
+        
+        # Flatten and apply MLP for restoration
+        B, C, H, W = x_combined.shape
+        flattened = x_combined.view(B, -1)
+        
+        restored = self.mlp(flattened)
+        restored = restored.view(B, C, H, W)
+        return restored
 
-    # Create padded version of the image
-    padded_image = np.pad(image, ((shift, shift), (shift, shift), (0, 0)), mode='reflect')
+# Example of how to use this model with a dummy image
+if __name__ == '__main__':
+    torch.set_printoptions(linewidth=200)
 
-    # Rearrange by shifting
-    rearranged = (padded_image[:-window_size, :-window_size, :] + 
-                  padded_image[window_size:, window_size:, :]) / 2
-    return rearranged
+    # Test with a dummy image (4x4)
+    dummy_input = torch.arange(1, 17).reshape(1, 1, 4, 4).float()
+    print("Test Case - 4x4 input")
+    print("Input:")
+    print(dummy_input)
 
-# Apply the spatial rearrangement with different window sizes
-lr_small = spatial_rearrange(lr_array, window_size=2)
-lr_medium = spatial_rearrange(lr_array, window_size=4)
-lr_large = spatial_rearrange(lr_array, window_size=8)
+    # Initialize the MSSR network
+    model = MSSRNet(in_channels=1, hidden_dim=64, out_channels=1, patch_size=4)
 
-# Combine the results
-lr_restored = (lr_small + lr_medium + lr_large) / 3  # Averaging the scales
-
-#############################################
-# PART 3: DISPLAY RESULTS
-#############################################
-
-show_image(lr_array, title="Blurry Image")
-show_image(lr_restored, title="Restored Image")
-
-
+    # Forward pass through the model
+    output = model(dummy_input)
+    print("\nOutput:")
+    print(output)
