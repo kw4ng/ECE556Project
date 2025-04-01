@@ -1,169 +1,64 @@
-import os
-from glob import glob
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from tqdm import tqdm
-from PIL import Image
-from joblib import Parallel, delayed
-
-#############################################
-# PART 1: IMAGE PATCH EXTRACTION FROM GoPro DATASET
-#############################################
-
-# Parameters for patch extraction
-num_cores = 10
-patch_size = 256  # training on 256x256 patches
-overlap = 128
-src = 'GOPRO_Large/train'  # Raw dataset location
-tar = 'Datasets/train/GoPro'  # Destination for cropped dataset
-
-# Directories for cropped images
-lr_tar = os.path.join(tar, 'input_crops')   # Blurry cropped images
-hr_tar = os.path.join(tar, 'target_crops')    # Sharp cropped images
-
-os.makedirs(lr_tar, exist_ok=True)
-os.makedirs(hr_tar, exist_ok=True)
-
-# Get image file paths (using sorted() instead of natsort)
-lr_files = sorted(glob(os.path.join(src, '*', 'blur', '*.png')) + 
-                  glob(os.path.join(src, '*', 'blur', '*.jpg')))
-hr_files = sorted(glob(os.path.join(src, '*', 'sharp', '*.png')) + 
-                  glob(os.path.join(src, '*', 'sharp', '*.jpg')))
-
-# Pair up blurry and sharp images
-files = [(lr, hr) for lr, hr in zip(lr_files, hr_files)]
-print(f"Found {len(lr_files)} blurry images")
-print(f"Found {len(hr_files)} sharp images")
-print(f"Prepared {len(files)} image pairs")
-if len(files) > 0:
-    print(f"First image pair:\n  LR: {files[0][0]}\n  HR: {files[0][1]}")
-
-def train_files(file_pair):
-    lr_file, hr_file = file_pair
-    # Open images using PIL
-    lr_image = Image.open(lr_file)
-    hr_image = Image.open(hr_file)
-    
-    lr_width, lr_height = lr_image.size
-    hr_width, hr_height = hr_image.size
-    
-    # Skip if the image is smaller than patch size
-    if lr_width < patch_size or lr_height < patch_size:
-        return
-    
-    # Crop the images into patches with the given overlap
-    for i in range(0, lr_width - patch_size + 1, patch_size - overlap):
-        for j in range(0, lr_height - patch_size + 1, patch_size - overlap):
-            lr_patch = lr_image.crop((i, j, i + patch_size, j + patch_size))
-            hr_patch = hr_image.crop((i, j, i + patch_size, j + patch_size))
-            
-            # Save the cropped patches
-            base_lr = os.path.basename(lr_file).split('.')[0]
-            base_hr = os.path.basename(hr_file).split('.')[0]
-            lr_patch.save(os.path.join(lr_tar, f"{base_lr}_patch_{i}_{j}.png"))
-            hr_patch.save(os.path.join(hr_tar, f"{base_hr}_patch_{i}_{j}.png"))
-
-# Crop images in parallel
-Parallel(n_jobs=num_cores)(delayed(train_files)(pair) for pair in tqdm(files))
-
-#############################################
-# PART 2: MODEL DEFINITION: SRM / MSSRNet
-#############################################
-
-# Provided Spatial Rearrangement Unit (SRU)
-class SpatialRearrangementUnit(nn.Module):
-    def __init__(self, window_size):
+ MSSR Block (One SRM Block) ------------
+class MSSRBlock(nn.Module):
+    def __init__(self, window_size, in_channels, final_height, final_width, step_size):
         """
-        window_size: local window size (assumed square), e.g. 4 means a 4x4 window.
-        The step size is half of the window size.
+        One SRM block performing rearrangement, window partitioning, projection,
+        merging, and restoration. The final output is resized/cropped to final_height x final_width.
         """
-        super(SpatialRearrangementUnit, self).__init__()
+        super(MSSRBlock, self).__init__()
+        self.final_height = final_height
+        self.final_width = final_width
         self.window_size = window_size
-        self.step = window_size // 2
-
-    def rearrange_dimension(self, x, dim):
-        """
-        Rearrange features along specified dimension.
-        Input: x: tensor of shape (B, C, H, W)
-        """
-        chunk_size = self.window_size // 2
-        chunks = list(x.split(chunk_size, dim=dim))
-        num_chunks = (x.size(dim) - 2 * chunk_size) // chunk_size
-        num_groups = num_chunks // 2
-        new_chunks = []
-        for i in range(1, num_groups + 1):
-            first = chunks[2 * i - 2]
-            second = chunks[2 * i + 1]
-            new_chunks.append(torch.cat([first, second], dim=dim))
-        return torch.cat(new_chunks, dim=dim)
+        self.step_size = step_size
+        self.rearrangement = SpatialRearrangementUnit(window_size, step_size)
+        self.partitioning = WindowPartitioningUnit(window_size)
+        self.projection = SpatialProjectionUnit(in_channels, window_size)
+        self.merging = WindowMergingUnit(window_size)
+        self.restoration = SpatialRearrangementRestorationUnit(window_size, step_size)
 
     def forward(self, x):
-        B, C, H, W = x.shape
-        chunk_size = self.window_size // 2
+        # Step 1: Spatial rearrangement.
+        x = self.rearrangement(x)
+        B, C, H_new, W_new = x.shape
 
-        # Pad along width
-        left_pad = x[:, :, :, :chunk_size]
-        right_pad = x[:, :, :, -chunk_size:]
-        x_padded_w = torch.cat([left_pad, x, right_pad], dim=3)
-        x_width = self.rearrange_dimension(x_padded_w, dim=3)
+        # Pad if needed so H_new and W_new are divisible by window_size.
+        pad_h = (self.window_size - H_new % self.window_size) % self.window_size
+        pad_w = (self.window_size - W_new % self.window_size) % self.window_size
+        if pad_h or pad_w:
+            x = F.pad(x, (0, pad_w, 0, pad_h))
+            H_new += pad_h
+            W_new += pad_w
 
-        # Pad along height
-        top_pad = x_width[:, :, :chunk_size, :]
-        bottom_pad = x_width[:, :, -chunk_size:, :]
-        x_padded_h = torch.cat([top_pad, x_width, bottom_pad], dim=2)
-        x_final = self.rearrange_dimension(x_padded_h, dim=2)
+        # Step 2: Partition into windows.
+        x_windows = self.partitioning(x)
+        # Step 3: Projection (MLP) on each window.
+        x_proj = self.projection(x_windows)
+        # Step 4: Merge windows back.
+        x_merged = self.merging(x_proj, H_new, W_new)
+        # Step 5: Restoration.
+        x_restored = self.restoration(x_merged)
+        # Crop back if padding was added.
+        x_cropped = x_restored[:, :, :self.final_height, :self.final_width]
+        # Resize to ensure final dimensions.
+        x_final = F.interpolate(x_cropped, size=(self.final_height, self.final_width), mode='bilinear', align_corners=False)
         return x_final
 
-# Multiscale SRM Model (MSSRNet)
-class MultiscaleSRM(nn.Module):
-    def __init__(self, in_channels, hidden_dim, out_channels, patch_size):
-        super(MultiscaleSRM, self).__init__()
-        self.patch_size = patch_size  # assumed spatial size of the feature map
-
-        # Different SRU modules for different scales
-        self.sru_small = SpatialRearrangementUnit(window_size=2)
-        self.sru_medium = SpatialRearrangementUnit(window_size=4)
-        self.sru_large = SpatialRearrangementUnit(window_size=8)
-
-        # Calculate flattened dimension from in_channels and patch size
-        flattened_dim = in_channels * patch_size * patch_size
-
-        # MLP for feature restoration
-        self.mlp = nn.Sequential(
-            nn.Linear(flattened_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, flattened_dim)
-        )
+# ----------- MSSR Network with 3 SRM Blocks ------------
+class MSSRNetwork(nn.Module):
+    def __init__(self, window_size, in_channels, final_height, final_width, step_sizes):
+        """
+        Constructs a network with three SRM blocks.
+        Each block uses the same window size but a different step size.
+        """
+        super(MSSRNetwork, self).__init__()
+        assert len(step_sizes) == 3, "Provide three step sizes."
+        self.blocks = nn.ModuleList([
+            MSSRBlock(window_size, in_channels, final_height, final_width, step_sizes[0]),
+            MSSRBlock(window_size, in_channels, final_height, final_width, step_sizes[1]),
+            MSSRBlock(window_size, in_channels, final_height, final_width, step_sizes[2])
+        ])
 
     def forward(self, x):
-        # x is expected to have shape (B, C, patch_size, patch_size)
-        x_small = self.sru_small(x)
-        x_medium = self.sru_medium(x)
-        x_large = self.sru_large(x)
-        
-        # Combine features from different scales (element-wise sum)
-        x_combined = x_small + x_medium + x_large
-        
-        B, C, H, W = x_combined.shape
-        flattened = x_combined.view(B, -1)  # Flatten spatial dimensions
-        
-        restored = self.mlp(flattened)
-        restored = restored.view(B, C, H, W)
-        return restored
-
-#############################################
-# PART 3: TESTING THE MODEL WITH A PATCH
-#############################################
-def test_model():
-    # Create a dummy patch with shape (B, C, patch_size, patch_size)
-    B, C = 1, 3
-    dummy_patch = torch.randn(B, C, patch_size, patch_size)
-    
-    model = MultiscaleSRM(in_channels=C, hidden_dim=64, out_channels=C, patch_size=patch_size)
-    output = model(dummy_patch)
-    
-    print("Input shape:", dummy_patch.shape)
-    print("Output shape:", output.shape)
-
-test_model()
+        for block in self.blocks:
+            x = block(x)
+        return x
