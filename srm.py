@@ -290,7 +290,7 @@ class SRMBlock(nn.Module):
         super(SRMBlock, self).__init__()
         self.rearrangement = SpatialRearrangementUnit(window_size)
         self.partitioning = WindowPartitioningUnit(window_size)
-        self.projection = SpatialProjectionUnit(in_channels, window_size)
+        self.projection = SpatialProjectionUnit(window_size)
         self.merging = WindowMergingUnit(window_size, original_height, original_width)
         self.restoration = SpatialRearrangementRestorationUnit(window_size)
         
