@@ -130,22 +130,19 @@ class SpatialProjectionUnit(nn.Module):
     Output shape: (num_windows, C, H, W) — same as input, but values transformed
     """
 
-    def __init__(self, in_channels, window_size):
+    def __init__(self, window_size):
         super(SpatialProjectionUnit, self).__init__()
-        self.in_channels = in_channels # channel in should always be 3 channel color 
         self.window_size = window_size # window size should be same with previous window size
-        self.flatten_dim = in_channels * window_size * window_size # calculate flattened dimension (eg. (16,3,4,4) will be (16,48))
+        self.flatten_dim = window_size * window_size # calculate flattened dimension (eg. (16,1,4,4) will be (16,16))
 
         # Fully connected layer for projection
         self.fc = nn.Linear(self.flatten_dim, self.flatten_dim) # fc layer
 
     def forward(self, x):
         B, C, H, W = x.shape
-        assert C == self.in_channels and H == W == self.window_size, \
-            f"Expected input shape (B, {self.in_channels}, {self.window_size}, {self.window_size}), got {x.shape}"
 
         # Flatten each window
-        x_flat = x.view(B, -1)  # shape: (B, C*H*W)
+        x_flat = x.view(B, C, -1)  # shape: (B, C*H*W)
         #print("\nFlattened Input:")
         #print(x_flat)
         
@@ -187,73 +184,100 @@ class WindowMergingUnit(nn.Module):
 
         return x
 
-# Rearrangment Unit (pretty much a altered version of original rearrangment code)
+import torch
+import torch.nn as nn
+
 class SpatialRearrangementRestorationUnit(nn.Module):
-    def __init__(self, window_size):
+    def __init__(self, window_size, step_size):
         """
-        window_size: local window size (assumed square), e.g. 4 means a 4x4 window.
-        The step size is half of the window size.
+        window_size: local window size (assumed square), e.g. 4 means a 4×4 window.
+        step_size: usually half of window_size (e.g. 2 for window_size=4).
         """
         super(SpatialRearrangementRestorationUnit, self).__init__()
         self.window_size = window_size
-        self.step = window_size // 2
-   
-    def restore_dimension(self, x, dim):
+        self.step = step_size
+
+    def inverse_rearrange_dimension(self, x, dim):
         """
-        Restores the original ordering along a given dimension by processing
-        all groups and reintroducing the boundary chunks.
+        Inverse the rearrangement along the specified dimension.
+        The forward rearrangement splits the padded tensor (of size original + 2*self.step)
+        into chunks of size (window_size//2) and then, for each group, concatenates two chunks:
+          left_index = i*chunk_size and right_index = (i*chunk_size + 1) + (self.step // chunk_size).
+        Here we reconstruct a list of padded chunks of total length:
+          total_chunks = (x.size(dim) + 2*self.step) // chunk_size.
+        We fill the positions corresponding to the forward mapping and, for any missing slots,
+        we fill as follows: if the missing index is 1 (i.e. the first pad) we copy index 0;
+        if it is the second-to-last index, we copy the last index.
         """
         chunk_size = self.window_size // 2
-        # Split the tensor along the dimension.
-        chunks = list(x.split(chunk_size, dim=dim))
-        # Assume that the original forward unit padded by taking the first and last chunks
-        # as boundaries. So we save them:
-        left_boundary = chunks[0]
-        right_boundary = chunks[-1]
-        # The remaining chunks (the interior ones) are assumed to have been processed in groups.
-        interior_chunks = chunks[1:-1]
-        # Compute number of groups from the interior:
-        num_chunks = len(interior_chunks)  # this should be even
-        num_groups = num_chunks // 2
+        offset = self.step // chunk_size
+        # Number of groups in the rearranged output along this dimension:
+        num_groups = x.size(dim) // (2 * chunk_size)
+        # The padded tensor was split into total_chunks chunks.
+        total_chunks = (x.size(dim) + 2 * self.step) // chunk_size  # e.g. (16+8)//2 = 12
 
-        new_chunks = []
-        # Process each interior group.
-        # In the forward unit each group was formed by concatenating:
-        #   [chunks[2*i - 2], chunks[2*i + 1]]
-        # So for inversion we swap the order.
-        for i in range(1, num_groups + 1):
-            # Note: interior_chunks[0] corresponds to chunks[1] from the original,
-            # interior_chunks[-1] corresponds to chunks[-2]
-            first = interior_chunks[2*i - 2]  # originally from the left part of the group
-            second = interior_chunks[2*i - 1]  # originally from the right part of the group
-            # To invert the forward permutation, swap their order.
-            new_chunks.append(torch.cat([second, first], dim=dim))
-        # Now, reintroduce the boundary chunks.
-        # You can choose to prepend left_boundary and append right_boundary,
-        # or merge them in a way that restores the full dimension.
-        # For example, if the forward pass simply removed these boundaries,
-        # we can simply:
-        restored = torch.cat([left_boundary] + new_chunks + [right_boundary], dim=dim)
-        return restored
+        padded_chunks = [None] * total_chunks
 
+        # Split x into groups (each group has size 2*chunk_size)
+        groups = list(x.split(2 * chunk_size, dim=dim))
+        # groups: [1 2 7 8; 1 2 11 12; 5 6 15 16; 9 10 15 16]
+        # i = 0 1 2 3
+        # for i, group in enumerate(groups):
+        #     first_half, second_half = group.split(chunk_size, dim=dim)
+        #     # According to the forward mapping for step_size=2:
+        #     #   original_input_chunk_index = i * chunk_size + (self.step // chunk_size)
+        #     #   left_index = original_input_chunk_index - (self.step // chunk_size)
+        #     #   right_index = (original_input_chunk_index + 1) + (self.step // chunk_size)
+        #     left_index = i * chunk_size  # for step=2 and chunk_size=2, i*2: 0,2,4,6,...
+        #     right_index = left_index + 3   # 0+3=3, 2+3=5, 4+3=7, 6+3=9
+        #     padded_chunks[left_index] = first_half
+        #     padded_chunks[right_index] = second_half
+
+        for i, group in enumerate(groups):
+            # Each group was split into two halves (each of size chunk_size)
+            first_half, second_half = group.split(chunk_size, dim=dim)
+            # Compute indices from parameters:
+            left_index = i * chunk_size  # = original_input_chunk_index - offset
+            right_index = i * chunk_size + 1 + 2 * offset  # = (original_input_chunk_index + 1) + offset
+            padded_chunks[left_index] = first_half
+            padded_chunks[right_index] = second_half
+
+        # [1 2; X; 3 4; 5 6; 7 8; 9 10; 11 12; 13 14; X; 15 16]
+        # padded chunks
+        # [1 2; X; 1 2; X; 5 6; 7 8; 9 10; 11 12; X; 15 16; X; 15 16]
+
+        # Fill in the missing chunks.
+        for idx in range(total_chunks):
+            if padded_chunks[idx] is None:
+                print("IDX MISSING: ", idx)
+                if idx < total_chunks / 2:
+                    # use left boundary
+                    padded_chunks[idx] = padded_chunks[idx - 1]
+                else:
+                    padded_chunks[idx] = padded_chunks[idx + 1]
+                    
+        # Reconstruct the padded tensor.
+        restored_padded = torch.cat(padded_chunks, dim=dim)
+        return restored_padded
 
     def forward(self, x):
         """
-        Apply width-direction rearrangement first, followed by height-direction.
-        x: tensor of shape (B, C, H, W)
+        Undo the spatial rearrangement along both dimensions.
+        The inverse is applied in reverse order:
+          1. Inverse rearrangement along the height (dim=2),
+          2. Remove height padding,
+          3. Inverse rearrangement along the width (dim=3),
+          4. Remove width padding.
         """
-        B, C, H, W = x.shape
-        chunk_size = self.window_size // 2
-        
-        # Apply width rearrangement
-        x_width = self.restore_dimension(x, dim=3)
-        
-        #print("\nAfter height padding:")
-        #print(x_padded_h[0, 0])
-        
-        x_restore = self.restore_dimension(x_width, dim=2)
-        
-        return x_restore
+        # Inverse height rearrangement.
+        x_inv_h = self.inverse_rearrange_dimension(x, dim=2)
+        # Remove height padding (assumes padding of self.step rows at top and bottom).
+        x_unpad_h = x_inv_h[:, :, self.step: -self.step, :]
+        # Inverse width rearrangement.
+        x_inv_w = self.inverse_rearrange_dimension(x_unpad_h, dim=3)
+        # Remove width padding (assumes padding of self.step columns at left and right).
+        x_unpad_w = x_inv_w[:, :, :, self.step: -self.step]
+        return x_unpad_w
 
 # SRM block that intigrate all 5 previous class
 class SRMBlock(nn.Module):
@@ -306,9 +330,13 @@ def test_spatial_rearrangement():
     print("\nOutput with step_size=2:")
     print(output_2[0, 0])
 
-    print("Original input shape:", x.shape)
-    print("\nOriginal input:")
-    print(x[0, 0])
+    # Test restoration for step_size=2
+    restoration_2 = SpatialRearrangementRestorationUnit(window_size=4, step_size=2)
+    restored_2 = restoration_2(output_2)
+    print("\nRestored output (step_size=2):")
+    print(restored_2[0, 0])
+    print("\nRestoration error (step_size=2):")
+    print(torch.mean((x - restored_2).abs()))
 
     # Test with window_size=4, step_size=4
     print("\n=== Testing with window_size=4, step_size=4 ===")
@@ -317,6 +345,14 @@ def test_spatial_rearrangement():
     print("\nOutput shape:", output_4.shape)
     print("\nOutput with step_size=4:")
     print(output_4[0, 0])
+
+    # Test restoration for step_size=4
+    restoration_4 = SpatialRearrangementRestorationUnit(window_size=4, step_size=4)
+    restored_4 = restoration_4(output_4)
+    print("\nRestored output (step_size=4):")
+    print(restored_4[0, 0])
+    print("\nRestoration error (step_size=4):")
+    print(torch.mean((x - restored_4).abs()))
 
 if __name__ == "__main__":
     torch.set_printoptions(linewidth=200)
