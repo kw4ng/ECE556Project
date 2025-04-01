@@ -1,17 +1,18 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
 
 # Spaital Rearrangment Unit
 class SpatialRearrangementUnit(nn.Module):
-    def __init__(self, window_size):
+    def __init__(self, window_size, step_size):
         """
         window_size: local window size (assumed square), e.g. 4 means a 4x4 window.
         The step size is half of the window size.
         """
         super(SpatialRearrangementUnit, self).__init__()
         self.window_size = window_size
-        self.step = window_size // 2
+        self.step = step_size
 
     def rearrange_dimension(self, x, dim):
         """
@@ -20,17 +21,31 @@ class SpatialRearrangementUnit(nn.Module):
         """
         chunk_size = self.window_size // 2
         chunks = list(x.split(chunk_size, dim=dim))
+
+        # chunks = [01 23 45 67 89 1011]
+        # padded chunks = [01 23 01 23 45 67 89 1011 89 1011]
         
         # Number of complete groups (excluding boundaries)
-        num_chunks = (x.size(dim) - 2 * chunk_size) // chunk_size
-        num_groups = num_chunks // 2
+        num_chunks = (x.size(dim) - 2 * self.step) // chunk_size  # 12 / 2 = 6
+        num_groups = num_chunks // 2  # 3??
         
         new_chunks = []
         # Process groups by combining alternate chunks
-        for i in range(1, num_groups + 1):
-            first = chunks[2 * i - 2]  # end of previous group
-            second = chunks[2 * i + 1]  # start of next group
+        for i in range(0, num_groups):
+
+            # depending on the step size padding, the "first" group index of the original image will be different
+            
+            original_input_chunk_index = i * chunk_size + self.step // chunk_size
+
+            left_index = (original_input_chunk_index - self.step // chunk_size)
+            right_index = (original_input_chunk_index + 1) + self.step // chunk_size
+
+            first = chunks[left_index]  # end of previous group
+            second = chunks[right_index]  # start of next group
             new_chunks.append(torch.cat([first, second], dim=dim))
+
+            # new chunks
+            # [01 67 01 ]
             
         return torch.cat(new_chunks, dim=dim)
 
@@ -43,19 +58,19 @@ class SpatialRearrangementUnit(nn.Module):
         chunk_size = self.window_size // 2
 
         # Create padding by using border chunks once
-        left_pad = x[:, :, :, :chunk_size]  # left chunk
-        right_pad = x[:, :, :, -chunk_size:]  # right chunk
+        left_pad = x[:, :, :, :self.step]  # left chunk
+        right_pad = x[:, :, :, -self.step:]  # right chunk
         x_padded_w = torch.cat([left_pad, x, right_pad], dim=3)
         
-        #print("\nAfter width padding:")
-        #print(x_padded_w[0, 0])
+        print("\nAfter width padding:")
+        print(x_padded_w[0, 0])
         
         # Apply width rearrangement
         x_width = self.rearrange_dimension(x_padded_w, dim=3)
         
         # Now pad and rearrange in height direction
-        top_pad = x_width[:, :, :chunk_size, :]  # top chunk
-        bottom_pad = x_width[:, :, -chunk_size:, :]  # bottom chunk
+        top_pad = x_width[:, :, :self.step, :]  # top chunk
+        bottom_pad = x_width[:, :, -self.step:, :]  # bottom chunk
         x_padded_h = torch.cat([top_pad, x_width, bottom_pad], dim=2)
         
         #print("\nAfter height padding:")
@@ -268,3 +283,43 @@ class SRMBlock(nn.Module):
         # 5. Restore original spatial ordering (inverse rearrangement)
         x = self.restoration(x)
         return x
+
+def create_test_input(size=16):
+    # Create a 16x16 matrix with values 1-256
+    values = np.arange(1, size*size + 1).reshape(size, size)
+    # Convert to torch tensor and add batch and channel dimensions
+    x = torch.FloatTensor(values).unsqueeze(0).unsqueeze(0)
+    return x
+
+def test_spatial_rearrangement():
+    # Create input tensor (1, 1, 16, 16)
+    x = create_test_input(16)
+    print("Original input shape:", x.shape)
+    print("\nOriginal input:")
+    print(x[0, 0])
+
+    # Test with window_size=4, step_size=2
+    print("\n=== Testing with window_size=4, step_size=2 ===")
+    sru_2 = SpatialRearrangementUnit(window_size=4, step_size=2)
+    output_2 = sru_2(x)
+    print("\nOutput shape:", output_2.shape)
+    print("\nOutput with step_size=2:")
+    print(output_2[0, 0])
+
+    print("Original input shape:", x.shape)
+    print("\nOriginal input:")
+    print(x[0, 0])
+
+    # Test with window_size=4, step_size=4
+    print("\n=== Testing with window_size=4, step_size=4 ===")
+    sru_4 = SpatialRearrangementUnit(window_size=4, step_size=4)
+    output_4 = sru_4(x)
+    print("\nOutput shape:", output_4.shape)
+    print("\nOutput with step_size=4:")
+    print(output_4[0, 0])
+
+if __name__ == "__main__":
+    torch.set_printoptions(linewidth=200)
+    test_spatial_rearrangement()
+
+
