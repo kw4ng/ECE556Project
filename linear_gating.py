@@ -22,12 +22,13 @@ class LinearGating(nn.Module):
         N = H * W # shrink dimension
 
         # Flatten spatial locations and permute to [B, N, C]
-        x_reshaped = x.view(B, C, N).permute(0, 2, 1)
+        #x_reshaped = x.view(B, C, N).permute(0, 2, 1)
+        x_reshaped = x.reshape(B, C, N).permute(0, 2, 1)
 
         # Apply linear gating
         gated = x_reshaped * self.activation(self.fc(x_reshaped))
 
         # Restore shape to [B, C, H, W]
-        out = gated.permute(0, 2, 1).view(B, C, H, W)
+        out = gated.permute(0, 2, 1).reshape(B, C, H, W)
 
         return out
