@@ -281,18 +281,18 @@ class SpatialRearrangementRestorationUnit(nn.Module):
 
 # SRM block that intigrate all 5 previous class
 class SRMBlock(nn.Module):
-    def __init__(self, window_size, in_channels, original_height, original_width):
+    def __init__(self, window_size, step_size, in_channels, original_height, original_width):
         """
         window_size: size of the local window (e.g., 4 for a 4x4 window).
         in_channels: number of channels of the input feature map.
         original_height, original_width: dimensions of the feature map after rearrangement.
         """
         super(SRMBlock, self).__init__()
-        self.rearrangement = SpatialRearrangementUnit(window_size)
+        self.rearrangement = SpatialRearrangementUnit(window_size,step_size)
         self.partitioning = WindowPartitioningUnit(window_size)
         self.projection = SpatialProjectionUnit(window_size)
         self.merging = WindowMergingUnit(window_size, original_height, original_width)
-        self.restoration = SpatialRearrangementRestorationUnit(window_size)
+        self.restoration = SpatialRearrangementRestorationUnit(window_size, step_size)
         
     def forward(self, x):
         # x: (B, C, H, W)
@@ -307,7 +307,8 @@ class SRMBlock(nn.Module):
         # 5. Restore original spatial ordering (inverse rearrangement)
         x = self.restoration(x)
         return x
-
+        
+#######################Test Functions###################################
 def create_test_input(size=16):
     # Create a 16x16 matrix with values 1-256
     values = np.arange(1, size*size + 1).reshape(size, size)
