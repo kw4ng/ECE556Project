@@ -37,7 +37,6 @@ class ChannelMLP(nn.Module):
         self.gelu = nn.GELU()
 
     def forward(self, x):
-        # Input: [B, C, H, W]
         x = self.fc1(x)
         x = self.gelu(x)
         x = self.dwconv(x)

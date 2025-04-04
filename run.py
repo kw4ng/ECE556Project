@@ -34,7 +34,7 @@ def main():
     img_tensor = torch.from_numpy(img.transpose(2, 0, 1)).float().unsqueeze(0)
 
     # Normalize to [0, 1]
-    img_tensor = img_tensor / 255.0
+    # img_tensor = img_tensor / 255.0
 
     print(f"Input tensor shape: {img.shape}")
     
@@ -48,6 +48,7 @@ def main():
         step_sizes=[2, 4, 8]  # Example step sizes for the three blocks
     )  # Adjust parameters as needed
     mssr_output = mssr_network(img_tensor)
+    
     print(f"After MSSR block: {mssr_output.shape}")
     
     if mssr_output.is_cuda:
