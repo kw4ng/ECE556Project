@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
+from linear_gating import LinearGating
 
 # Spaital Rearrangment Unit
 class SpatialRearrangementUnit(nn.Module):
@@ -130,7 +131,7 @@ class SpatialProjectionUnit(nn.Module):
     Output shape: (num_windows, C, H, W) — same as input, but values transformed
     """
 
-    def __init__(self, window_size):
+    def __init__(self, in_channels, window_size):
         super(SpatialProjectionUnit, self).__init__()
         self.window_size = window_size # window size should be same with previous window size
         self.flatten_dim = window_size * window_size # calculate flattened dimension (eg. (16,1,4,4) will be (16,16))
@@ -290,10 +291,11 @@ class SRMBlock(nn.Module):
         super(SRMBlock, self).__init__()
         self.rearrangement = SpatialRearrangementUnit(window_size,step_size)
         self.partitioning = WindowPartitioningUnit(window_size)
-        self.projection = SpatialProjectionUnit(window_size)
+        self.projection = SpatialProjectionUnit(in_channels, window_size)
         self.merging = WindowMergingUnit(window_size, original_height, original_width)
         self.restoration = SpatialRearrangementRestorationUnit(window_size, step_size)
-        
+        self.linear_gating = LinearGating(dim=in_channels, use_activation=True)        
+   
     def forward(self, x):
         # x: (B, C, H, W)
         # 1. Apply spatial rearrangement (with padding)

@@ -1,4 +1,9 @@
- # MSSR Block (One SRM Block) ------------
+from srm import SRMBlock, SpatialRearrangementUnit, WindowPartitioningUnit, SpatialProjectionUnit, WindowMergingUnit, SpatialRearrangementRestorationUnit
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+# MSSR Block (One SRM Block) ------------
 class MSSRBlock(nn.Module):
     def __init__(self, window_size, in_channels, final_height, final_width, step_size):
         """
@@ -13,7 +18,7 @@ class MSSRBlock(nn.Module):
         self.rearrangement = SpatialRearrangementUnit(window_size, step_size)
         self.partitioning = WindowPartitioningUnit(window_size)
         self.projection = SpatialProjectionUnit(in_channels, window_size)
-        self.merging = WindowMergingUnit(window_size)
+        self.merging = WindowMergingUnit(window_size, final_height, final_width)
         self.restoration = SpatialRearrangementRestorationUnit(window_size, step_size)
 
     def forward(self, x):
@@ -34,7 +39,7 @@ class MSSRBlock(nn.Module):
         # Step 3: Projection (MLP) on each window.
         x_proj = self.projection(x_windows)
         # Step 4: Merge windows back.
-        x_merged = self.merging(x_proj, H_new, W_new)
+        x_merged = self.merging(x_proj)
         # Step 5: Restoration.
         x_restored = self.restoration(x_merged)
         # Crop back if padding was added.
