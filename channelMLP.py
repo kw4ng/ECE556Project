@@ -2,7 +2,7 @@
 # “We apply a channel-mixing MLP, which contains two fully connected layers with a GELU activation layer between them. 
 # To make the MLP focus on local information, we add a depthwise convolution operation between the two FC layers.”
 
-
+ # channels = 3 image is 256 x256
 
 import torch
 import torch.nn as nn

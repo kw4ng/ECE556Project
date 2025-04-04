@@ -1,4 +1,4 @@
- MSSR Block (One SRM Block) ------------
+ # MSSR Block (One SRM Block) ------------
 class MSSRBlock(nn.Module):
     def __init__(self, window_size, in_channels, final_height, final_width, step_size):
         """
