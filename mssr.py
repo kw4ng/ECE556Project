@@ -79,7 +79,7 @@ class MSSRNetwork(nn.Module):
 
         self.in_channels = in_channels
         self.blocks = nn.ModuleList([
-            MSSRBlock(window_size, in_channels // 3, final_height, final_width, s)
+            SRMBlock(window_size, in_channels // 3, final_height, final_width, s)
             for s in step_sizes
         ])
 
