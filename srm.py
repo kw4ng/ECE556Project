@@ -79,7 +79,8 @@ class SpatialRearrangementUnit(nn.Module):
         
         # Apply height rearrangement
         x_final = self.rearrange_dimension(x_padded_h, dim=2)
-        
+        print("SRM output shape:", x_final.shape)
+
         return x_final
 
 # Window Patition Unit
@@ -159,34 +160,22 @@ class SpatialProjectionUnit(nn.Module):
 
 # Window Merging Unit
 class WindowMergingUnit(nn.Module):
-    def __init__(self, window_size, original_height, original_width):
+    def __init__(self, window_size):
         super(WindowMergingUnit, self).__init__()
         self.window_size = window_size
-        self.H = original_height
-        self.W = original_width
 
-    def forward(self, x):
-        """
-        Args:
-            x: Tensor of shape (num_windows * B, C, M, M)
-        Returns:
-            merged: Tensor of shape (B, C, H, W)
-        """
+    def forward(self, x, H, W):
         B_windows, C, M, M2 = x.shape
         assert M == self.window_size and M2 == self.window_size, "Window size mismatch"
+        B = B_windows // ((H // M) * (W // M))
+        assert B * (H // M) * (W // M) == B_windows, "Invalid input size for merging"
 
-        B = B_windows // ((self.H // M) * (self.W // M))
-        assert B * (self.H // M) * (self.W // M) == B_windows, "Invalid input size for merging"
-
-        # Reshape and permute back to (B, C, H, W)
-        x = x.view(B, self.H // M, self.W // M, C, M, M)
+        x = x.view(B, H // M, W // M, C, M, M)
         x = x.permute(0, 3, 1, 4, 2, 5).contiguous()
-        x = x.view(B, C, self.H, self.W)
+        x = x.view(B, C, H, W)
 
         return x
 
-import torch
-import torch.nn as nn
 
 class SpatialRearrangementRestorationUnit(nn.Module):
     def __init__(self, window_size, step_size):
@@ -280,7 +269,7 @@ class SpatialRearrangementRestorationUnit(nn.Module):
         x_unpad_w = x_inv_w[:, :, :, self.step: -self.step]
         return x_unpad_w
 
-# SRM block that intigrate all 5 previous class
+# SRM block that intigrate all 5 previous class & Linear Gating
 class SRMBlock(nn.Module):
     def __init__(self, window_size, step_size, in_channels, original_height, original_width):
         """
@@ -292,11 +281,12 @@ class SRMBlock(nn.Module):
         self.rearrangement = SpatialRearrangementUnit(window_size,step_size)
         self.partitioning = WindowPartitioningUnit(window_size)
         self.projection = SpatialProjectionUnit(in_channels, window_size)
-        self.merging = WindowMergingUnit(window_size, original_height, original_width)
+        self.merging = WindowMergingUnit(window_size)
         self.restoration = SpatialRearrangementRestorationUnit(window_size, step_size)
-        self.linear_gating = LinearGating(dim=in_channels, use_activation=True)        
+        self.linear_gating = LinearGating(dim=in_channels, use_activation=False)        
    
     def forward(self, x):
+        H, W = x.shape[2], x.shape[3]
         # x: (B, C, H, W)
         # 1. Apply spatial rearrangement (with padding)
         x = self.rearrangement(x)
@@ -305,7 +295,7 @@ class SRMBlock(nn.Module):
         # 3. Apply spatial projection (window-based fully connected layer)
         x = self.projection(x)
         # 4. Merge windows back into a full feature map
-        x = self.merging(x)
+        x = self.merging(x,H,W)
         # 5. Restore original spatial ordering (inverse rearrangement)
         x = self.restoration(x)
         return x
