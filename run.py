@@ -109,8 +109,5 @@ def main():
     print("\nPipeline execution completed!")
 
 
-
-
-
 if __name__ == "__main__":
     main()

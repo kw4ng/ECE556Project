@@ -239,17 +239,17 @@ class SpatialRearrangementRestorationUnit(nn.Module):
         # Fill in the missing chunks.
         for idx in range(total_chunks):
             if padded_chunks[idx] is None:
-                print("IDX MISSING: ", idx)
-                if idx < total_chunks / 2:
-                    # use left boundary
+                # print("IDX MISSING: ", idx)
+                if idx < total_chunks // 2:
+                    # Use left boundary
                     padded_chunks[idx] = padded_chunks[idx - 1]
                 else:
-                    if idx == total_chunks - 1:
-                        # use right boundary
-                        padded_chunks[idx] = padded_chunks[idx - 1]
-                    else:
+                    # Use right boundary
+                    if idx < total_chunks - 1 and padded_chunks[idx + 1] is not None:
                         padded_chunks[idx] = padded_chunks[idx + 1]
-                    
+                    else:
+                        padded_chunks[idx] = padded_chunks[idx - 1]
+
         # Reconstruct the padded tensor.
         restored_padded = torch.cat(padded_chunks, dim=dim)
         return restored_padded
