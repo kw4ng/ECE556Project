@@ -18,7 +18,7 @@ class MSSRBlock(nn.Module):
         self.rearrangement = SpatialRearrangementUnit(window_size, step_size)
         self.partitioning = WindowPartitioningUnit(window_size)
         self.projection = SpatialProjectionUnit(in_channels, window_size)
-        self.merging = WindowMergingUnit(window_size, final_height, final_width)
+        self.merging = WindowMergingUnit(window_size)
         self.restoration = SpatialRearrangementRestorationUnit(window_size, step_size)
 
     def forward(self, x):
@@ -39,7 +39,7 @@ class MSSRBlock(nn.Module):
         # Step 3: Projection (MLP) on each window.
         x_proj = self.projection(x_windows)
         # Step 4: Merge windows back.
-        x_merged = self.merging(x_proj)
+        x_merged = self.merging(x_proj, H_new, W_new)
         # Step 5: Restoration.
         x_restored = self.restoration(x_merged)
         # Crop back if padding was added.
@@ -49,6 +49,25 @@ class MSSRBlock(nn.Module):
         return x_final
 
 # ----------- MSSR Network with 3 SRM Blocks ------------
+# class MSSRNetwork(nn.Module):
+#     def __init__(self, window_size, in_channels, final_height, final_width, step_sizes):
+#         """
+#         Constructs a network with three SRM blocks.
+#         Each block uses the same window size but a different step size.
+#         """
+#         super(MSSRNetwork, self).__init__()
+#         assert len(step_sizes) == 3, "Provide three step sizes."
+#         self.blocks = nn.ModuleList([
+#             MSSRBlock(window_size, in_channels, final_height, final_width, step_sizes[0]),
+#             MSSRBlock(window_size, in_channels, final_height, final_width, step_sizes[1]),
+#             MSSRBlock(window_size, in_channels, final_height, final_width, step_sizes[2])
+#         ])
+
+#     def forward(self, x):
+#         for block in self.blocks:
+#             x = block(x)
+#         return x
+
 class MSSRNetwork(nn.Module):
     def __init__(self, window_size, in_channels, final_height, final_width, step_sizes):
         """
@@ -57,13 +76,34 @@ class MSSRNetwork(nn.Module):
         """
         super(MSSRNetwork, self).__init__()
         assert len(step_sizes) == 3, "Provide three step sizes."
+
+        self.in_channels = in_channels
         self.blocks = nn.ModuleList([
-            MSSRBlock(window_size, in_channels, final_height, final_width, step_sizes[0]),
-            MSSRBlock(window_size, in_channels, final_height, final_width, step_sizes[1]),
-            MSSRBlock(window_size, in_channels, final_height, final_width, step_sizes[2])
+            MSSRBlock(window_size, in_channels // 3, final_height, final_width, s)
+            for s in step_sizes
         ])
 
+        self.pre_proj = nn.Sequential(
+            nn.Conv2d(in_channels, in_channels, kernel_size=1),
+            nn.GELU()
+        )
+        self.post_proj = nn.Conv2d(in_channels, in_channels, kernel_size=1)
+
     def forward(self, x):
-        for block in self.blocks:
-            x = block(x)
-        return x
+        # Channel projection + GELU
+        x = self.pre_proj(x)
+
+        # Split along channel dimension into 3 parts
+        splits = torch.chunk(x, 3, dim=1)
+        assert len(splits) == 3, "Input must be divisible by 3 channels"
+
+        # Apply each SRM block to a split
+        out_parts = [block(part) for block, part in zip(self.blocks, splits)]
+
+        # Concatenate along channel dim
+        x_cat = torch.cat(out_parts, dim=1)
+
+        # Final channel projection to fuse multiscale features
+        x_fused = self.post_proj(x_cat)
+        return x_fused
+
