@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt  # Add this for displaying the image
 
 from srm import SRMBlock, SpatialRearrangementUnit, WindowPartitioningUnit, SpatialProjectionUnit, WindowMergingUnit, SpatialRearrangementRestorationUnit
-from mssr import MSSRBlock, MSSRNetwork 
+from mssr import MSSRNetwork 
 from channelMLP import ChannelMLP  
 from linear_gating import LinearGating 
 
