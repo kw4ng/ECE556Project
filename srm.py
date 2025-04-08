@@ -244,7 +244,11 @@ class SpatialRearrangementRestorationUnit(nn.Module):
                     # use left boundary
                     padded_chunks[idx] = padded_chunks[idx - 1]
                 else:
-                    padded_chunks[idx] = padded_chunks[idx + 1]
+                    if idx == total_chunks - 1:
+                        # use right boundary
+                        padded_chunks[idx] = padded_chunks[idx - 1]
+                    else:
+                        padded_chunks[idx] = padded_chunks[idx + 1]
                     
         # Reconstruct the padded tensor.
         restored_padded = torch.cat(padded_chunks, dim=dim)
