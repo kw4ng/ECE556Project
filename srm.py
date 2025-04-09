@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import numpy as np
 from linear_gating import LinearGating
 
-# Spaital Rearrangment Unit
+# Spatial Rearrangement Unit
 class SpatialRearrangementUnit(nn.Module):
     def __init__(self, window_size, step_size):
         """
@@ -20,6 +20,7 @@ class SpatialRearrangementUnit(nn.Module):
         Rearrange features along specified dimension (width=3 or height=2).
         Input: x: tensor of shape (B, C, H, W)
         """
+        # print("rearrange x shape:", x.shape)
         chunk_size = self.window_size // 2
         chunks = list(x.split(chunk_size, dim=dim))
 
@@ -27,8 +28,8 @@ class SpatialRearrangementUnit(nn.Module):
         # padded chunks = [01 23 01 23 45 67 89 1011 89 1011]
         
         # Number of complete groups (excluding boundaries)
-        num_chunks = (x.size(dim) - 2 * self.step) // chunk_size  # 12 / 2 = 6
-        num_groups = num_chunks // 2  # 3??
+        num_chunks = (x.size(dim) - 2 * self.step) // chunk_size  # (32 - 2 * 4) // 2 = 12
+        num_groups = num_chunks // 2  # 6??
         
         new_chunks = []
         # Process groups by combining alternate chunks
@@ -55,16 +56,18 @@ class SpatialRearrangementUnit(nn.Module):
         Apply width-direction rearrangement first, followed by height-direction.
         x: tensor of shape (B, C, H, W)
         """
+        # print("SRM input shape:", x.shape)
         B, C, H, W = x.shape
         chunk_size = self.window_size // 2
-
+        # print("chunk size:", chunk_size)
+        # print("step size:", self.step)
         # Create padding by using border chunks once
         left_pad = x[:, :, :, :self.step]  # left chunk
         right_pad = x[:, :, :, -self.step:]  # right chunk
         x_padded_w = torch.cat([left_pad, x, right_pad], dim=3)
         
-        print("\nAfter width padding:")
-        print(x_padded_w[0, 0])
+        # print("\nAfter width padding:")
+        # print(x_padded_w[0, 0])
         
         # Apply width rearrangement
         x_width = self.rearrange_dimension(x_padded_w, dim=3)
@@ -79,7 +82,7 @@ class SpatialRearrangementUnit(nn.Module):
         
         # Apply height rearrangement
         x_final = self.rearrange_dimension(x_padded_h, dim=2)
-        print("SRM output shape:", x_final.shape)
+        # print("SRM output shape:", x_final.shape)
 
         return x_final
 

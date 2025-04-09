@@ -79,7 +79,7 @@ class MSSRNetwork(nn.Module):
 
         self.in_channels = in_channels
         self.blocks = nn.ModuleList([
-            SRMBlock(window_size, in_channels // 3, final_height, final_width, s)
+            SRMBlock(window_size, s, in_channels // 3, final_height, final_width)
             for s in step_sizes
         ])
 
@@ -90,6 +90,7 @@ class MSSRNetwork(nn.Module):
         self.post_proj = nn.Conv2d(in_channels, in_channels, kernel_size=1)
 
     def forward(self, x):
+        # print("MSSR NETWORK Input shape:", x.shape)
         # Channel projection + GELU
         x = self.pre_proj(x)
 
@@ -98,7 +99,12 @@ class MSSRNetwork(nn.Module):
         assert len(splits) == 3, "Input must be divisible by 3 channels"
 
         # Apply each SRM block to a split
-        out_parts = [block(part) for block, part in zip(self.blocks, splits)]
+        out_parts = []
+        for i, (block, part) in enumerate(zip(self.blocks, splits)):
+            # print(f"Split {i} before SRM block, shape: {part.shape}")
+            out = block(part)
+            # print(f"Split {i} after SRM block, shape: {out.shape}")
+            out_parts.append(out)
 
         # Concatenate along channel dim
         x_cat = torch.cat(out_parts, dim=1)

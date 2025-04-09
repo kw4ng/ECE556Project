@@ -7,7 +7,7 @@ from mssr_mlp import MSSRMLPBlock
 # -------------------------------
 def make_mssr_stage(in_channels, num_blocks, window_size, final_height, final_width, step_sizes):
     layers = []
-    for _ in range(num_blocks):
+    for block in range(num_blocks):
         layers.append(MSSRMLPBlock(in_channels, window_size, final_height, final_width, step_sizes))
     return nn.Sequential(*layers)
 
@@ -100,21 +100,26 @@ class UNetMSSRMLP_B(nn.Module):
     
     def forward(self, x):
         # Initial feature extraction.
+        # print("1")
         x0 = self.input_conv(x)
-        
+        # print("2")
         # Encoder with skip connections.
         e1 = self.encoder1(x0)             # Stage 1 output: [B, 42, input_size, input_size]
+        # print("3")
         d1 = self.down1(e1)                # [B, 84, input_size/2, input_size/2]
-        
+        # print("4")
         e2 = self.encoder2(d1)             # [B, 84, input_size/2, input_size/2]
+        # print("5")
         d2 = self.down2(e2)                # [B, 168, input_size/4, input_size/4]
-        
+        # print("6")
         e3 = self.encoder3(d2)             # [B, 168, input_size/4, input_size/4]
+        # print("7")
         d3 = self.down3(e3)                # [B, 336, input_size/8, input_size/8]
-        
+        # print("8")
+        # print("d3 shape:", d3.shape)
         # Bottleneck.
         b = self.bottleneck(d3)            # [B, 336, input_size/8, input_size/8]
-        
+        # print("9")
         # Decoder with skip connections.
         u3 = self.up3(b)                   # Upsample to [B, 168, input_size/4, input_size/4]
         d3_out = self.decoder3(u3 + e3)     # Merge with encoder stage 3

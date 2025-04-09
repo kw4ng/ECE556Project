@@ -24,6 +24,7 @@ class MSSRMLPBlock(nn.Module):
         self.channel_mlp = ChannelMLP(in_channels)
     
     def forward(self, x):
+        # print("Input shape:", x.shape)
         # x has shape [B, C, H, W]
         B, C, H, W = x.shape
         
@@ -45,5 +46,5 @@ class MSSRMLPBlock(nn.Module):
         # Pass through the ChannelMLP.
         mlp_out = self.channel_mlp(x1_norm)
         x2 = x1 + mlp_out
-        
+
         return x2
