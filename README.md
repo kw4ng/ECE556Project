@@ -67,7 +67,7 @@ This will run the model on all the input images, calculate the average PSNR and 
 ## Pre-trained Models
 Our pretrained model is in the repository as:
 ```
-.pth
+gopro_mssrmlp_b_e10_bs4_loss0.288616.pth
 ```
 
 ## Results
@@ -76,5 +76,9 @@ Our model achieves the following performance:
 
 | Model | Average PSNR (dB) | Average SSIM | FLOPs (G) | Params (M) |
 | - | - | - | - | - | 
-| Our model |     85%         |      95%       |
-|Paper's model | | | | |
+| Our model | 28.1463 | 0.8275 | 75.74 | 11.11 |
+| Paper's model | 33.23 | 0.962 | 64.06 | 15.68 |
+| MAXIM (MLP-based model) | 32.86 | 0.961 | 339.2 | 22.20 |
+| one more |
+
+Our model does not achieve the performance that the authors of the paper were able to. However, our model was trained on only subset of the training dataset, a fraction of the number of epochs (10 vs 3000), and is smaller in size. Given our limited time and resources, we believe it was successful. 
