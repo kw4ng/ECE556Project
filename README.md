@@ -78,6 +78,7 @@ Our model achieves the following performance:
 | - | - | - | - | - | 
 | Our model | 28.1463 | 0.8275 | 75.74 | 11.11 |
 | Paper's model | 33.23 | 0.962 | 64.06 | 15.68 |
-| MAXIM (MLP-based model) | 32.86 | 0.961 | 339.2 | 22.20 |
+| MAXIM (MLP-based) | 32.86 | 0.961 | 339.2 | 22.20 |
+| DMPHN (CNN-based) | 31.20 | 0.940 | 678.56 | 21.7 |
 
 Our model does not achieve the performance that the authors of the paper were able to. However, our model was trained on only subset of the training dataset, a fraction of the number of epochs (10 vs 3000), and is smaller in size. Given our limited time and resources, we believe it was successful. 
