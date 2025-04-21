@@ -2,3 +2,6 @@
 GOPRO_Large
 Datasets
 .ipynb_checkpoints/
+__pycache__/
+test_top_10.py
+images/

@@ -56,6 +56,9 @@ class SpatialRearrangementUnit(nn.Module):
         Apply width-direction rearrangement first, followed by height-direction.
         x: tensor of shape (B, C, H, W)
         """
+        if (self.step == 0):
+            # No rearrangement needed
+            return x
         # print("SRM input shape:", x.shape)
         B, C, H, W = x.shape
         chunk_size = self.window_size // 2
@@ -266,6 +269,9 @@ class SpatialRearrangementRestorationUnit(nn.Module):
           3. Inverse rearrangement along the width (dim=3),
           4. Remove width padding.
         """
+        if (self.step == 0):
+            # No rearrangement needed
+            return x
         # Inverse height rearrangement.
         x_inv_h = self.inverse_rearrange_dimension(x, dim=2)
         # Remove height padding (assumes padding of self.step rows at top and bottom).
@@ -293,18 +299,24 @@ class SRMBlock(nn.Module):
         self.linear_gating = LinearGating(dim=in_channels, use_activation=False)        
    
     def forward(self, x):
+        # print("SRM input shape:", x.shape)
         H, W = x.shape[2], x.shape[3]
         # x: (B, C, H, W)
         # 1. Apply spatial rearrangement (with padding)
         x = self.rearrangement(x)
+        # print("After rearrangement shape:", x.shape)
         # 2. Partition into non-overlapping windows
         x = self.partitioning(x)
+        # print("After partitioning shape:", x.shape)
         # 3. Apply spatial projection (window-based fully connected layer)
         x = self.projection(x)
+        # print("After projection shape:", x.shape)
         # 4. Merge windows back into a full feature map
         x = self.merging(x,H,W)
+        # print("After merging shape:", x.shape)
         # 5. Restore original spatial ordering (inverse rearrangement)
         x = self.restoration(x)
+        # print("After restoration shape:", x.shape)
         return x
         
 #######################Test Functions###################################

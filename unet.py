@@ -103,6 +103,7 @@ class UNetMSSRMLP_B(nn.Module):
         # print("1")
         x0 = self.input_conv(x)
         # print("2")
+        # print("x0 shape:", x0.shape)
         # Encoder with skip connections.
         e1 = self.encoder1(x0)             # Stage 1 output: [B, 42, input_size, input_size]
         # print("3")
